@@ -1,0 +1,8 @@
+sources:
+  - id: tsdb-epl
+    type: thesportsdb
+    streams: [leagues, teams, players, events]
+    params:
+      league_id: "4328"
+      code: EPL
+      season: "2023-2024"

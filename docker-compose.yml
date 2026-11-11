@@ -1,0 +1,120 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-sports}
+      MIGRATOR_DB_PASSWORD: ${MIGRATOR_DB_PASSWORD:-dev_migrator}
+      INGESTOR_DB_PASSWORD: ${INGESTOR_DB_PASSWORD:-dev_ingestor}
+      ORCHESTRATOR_DB_PASSWORD: ${ORCHESTRATOR_DB_PASSWORD:-dev_orchestrator}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./data/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 5s
+
+  migrator:
+    image: postgres:17-alpine
+    entrypoint: ["/bin/bash", "/migrator/migrate.sh"]
+    environment:
+      DATABASE_URL: postgres://migrator:${MIGRATOR_DB_PASSWORD:-dev_migrator}@postgres:5432/sports
+    volumes:
+      - ./data/migrator/migrate.sh:/migrator/migrate.sh:ro
+      - ./data/migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  ingestor:
+    build: ./ingestor
+    command: ["serve"]
+    environment:
+      INGESTOR_DATABASE_URL: postgres://ingestor:${INGESTOR_DB_PASSWORD:-dev_ingestor}@postgres:5432/sports
+      INGESTOR_SOURCES_CONFIG: /app/configs/${INGESTOR_SOURCES_FILE:-sources-espn.yaml}
+      INGESTOR_LOG_LEVEL: ${INGESTOR_LOG_LEVEL:-INFO}
+      INGESTOR_DAEMON_INTERVAL_SECONDS: ${INGESTOR_DAEMON_INTERVAL_SECONDS:-300}
+      INGESTOR_THESPORTSDB_API_KEY: ${INGESTOR_THESPORTSDB_API_KEY:-123}
+      INGESTOR_THESPORTSDB_BASE_URL: ${INGESTOR_THESPORTSDB_BASE_URL:-}
+      INGESTOR_ESPN_BASE_URL: ${INGESTOR_ESPN_BASE_URL:-}
+      INGESTOR_ESPN_CORE_BASE_URL: ${INGESTOR_ESPN_CORE_BASE_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+    restart: "no"
+
+  redis:
+    image: redis:8-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 3s
+
+  orchestrator:
+    build: ./orchestrator
+    command: ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      ORC_DATABASE_URL: postgresql://orchestrator:${ORCHESTRATOR_DB_PASSWORD:-dev_orchestrator}@postgres:5432/sports
+      ORC_CACHE_REDIS_URL: redis://redis:6379/0
+      ORC_CACHE_TTL_SECONDS: ${ORC_CACHE_TTL_SECONDS:-300}
+      ORC_LLM_PROVIDER: ${ORC_LLM_PROVIDER:-fake}
+      ORC_LLM_API_KEY: ${ORC_LLM_API_KEY:-}
+      ORC_LLM_TIMEOUT_SECONDS: ${ORC_LLM_TIMEOUT_SECONDS:-30}
+      ORC_LLM_MODEL: ${ORC_LLM_MODEL:-llama-3.3-70b-versatile}
+      ORC_FEW_SHOT_K: ${ORC_FEW_SHOT_K:-3}
+      ORC_RETRIEVAL_CHROMA_DIR: /data/chroma
+      ORC_MANIFEST_PATH: /app/data/schema/manifest.yaml
+      ORC_LOG_LEVEL: ${ORC_LOG_LEVEL:-INFO}
+    volumes:
+      - ./data/chroma:/data/chroma
+      - ./data/corpus:/data/corpus:ro
+      - ./data/schema/manifest.yaml:/app/data/schema/manifest.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: "no"
+
+  gateway:
+    build: ./gateway
+    environment:
+      GATEWAY_LISTEN_ADDR: :8080
+      GATEWAY_ORCHESTRATOR_URL: http://orchestrator:8000
+      GATEWAY_ORCHESTRATOR_TIMEOUT: ${GATEWAY_ORCHESTRATOR_TIMEOUT:-20}
+      GATEWAY_REDIS_URL: redis://redis:6379/0
+      GATEWAY_API_KEY: ${GATEWAY_API_KEY:-}
+      GATEWAY_RATE_LIMIT_PER_MINUTE: ${GATEWAY_RATE_LIMIT_PER_MINUTE:-60}
+      GATEWAY_LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-INFO}
+    ports:
+      - "8080:8080"
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  pgdata:

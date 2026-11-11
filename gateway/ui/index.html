@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sports Analytics</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: #f5f6f8; color: #1c2430; }
+main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 1.4rem; margin: 0 0 4px; }
+header p { margin: 0 0 20px; color: #5b6673; }
+form { display: grid; gap: 12px; background: #fff; border: 1px solid #dde3ea; border-radius: 10px; padding: 16px; }
+label { display: grid; gap: 4px; font-size: .85rem; color: #3c4652; font-weight: 600; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+textarea, input, select { font: inherit; padding: 8px 10px; border: 1px solid #c9d2dc; border-radius: 8px; width: 100%; background: #fbfcfe; color: inherit; }
+textarea { resize: vertical; }
+button { justify-self: start; padding: 9px 18px; border: 0; border-radius: 8px; background: #1f6feb; color: #fff; font-weight: 600; cursor: pointer; }
+button:disabled { opacity: .6; cursor: default; }
+#status { margin: 16px 0 0; padding: 10px 12px; border-radius: 8px; font-weight: 600; }
+#status.ok { background: #e7f6ec; color: #1b6b34; }
+#status.err { background: #fdeaea; color: #b3261e; white-space: pre-wrap; }
+#result { margin-top: 16px; }
+#meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 10px; font-size: .85rem; color: #3c4652; }
+.badge { padding: 2px 10px; border-radius: 999px; font-weight: 700; font-size: .75rem; letter-spacing: .04em; }
+.badge.miss { background: #e2e8f0; color: #334155; }
+.badge.hit { background: #d8f0e0; color: #166534; }
+.chip { background: #fff; border: 1px solid #dde3ea; border-radius: 999px; padding: 2px 10px; }
+.chip.warn { background: #fff4dd; border-color: #f0d9a5; color: #8a5a00; }
+.rid { color: #8a93a0; font-size: .75rem; }
+table { border-collapse: collapse; width: 100%; background: #fff; font-size: .9rem; }
+.tablewrap { border: 1px solid #dde3ea; border-radius: 10px; overflow: hidden; }
+th, td { border-bottom: 1px solid #e8edf2; padding: 8px 12px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+th { background: #f2f5f8; }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:nth-child(even) { background: #fafbfd; }
+.empty { background: #fff; border: 1px dashed #c9d2dc; border-radius: 10px; padding: 18px; text-align: center; color: #5b6673; }
+details { margin-top: 12px; background: #fff; border: 1px solid #dde3ea; border-radius: 10px; padding: 10px 14px; }
+summary { cursor: pointer; font-weight: 600; font-size: .85rem; color: #3c4652; }
+pre { overflow: auto; margin: 10px 0 2px; padding: 10px; background: #0f1720; color: #d6e2f0; border-radius: 8px; font-size: .8rem; line-height: 1.45; }
+@media (prefers-color-scheme: dark) {
+  body { background: #14181d; color: #dbe1e8; }
+  header p, label, #meta, summary, .empty, .rid { color: #9aa6b4; }
+  form, .chip, table, details, .empty { background: #1c222a; border-color: #2b3540; }
+  textarea, input, select { background: #151a20; color: inherit; border-color: #39434e; }
+  th { background: #232b34; }
+  td, th { border-bottom-color: #2b3540; }
+  tbody tr:nth-child(even) { background: #1a2028; }
+  #status.ok { background: #16321f; color: #7fd6a0; }
+  #status.err { background: #3b1a18; color: #f2a19c; }
+  .badge.miss { background: #2b3540; color: #b6c2ce; }
+  .badge.hit { background: #16321f; color: #7fd6a0; }
+  .chip.warn { background: #3a2f14; border-color: #564416; color: #e4b45c; }
+}
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>Sports Analytics</h1>
+<p>Ask a natural-language question over the warehouse. Answers are SQL the orchestrator writes, runs, and caches.</p>
+</header>
+<form id="ask">
+<label for="sport">Sport</label>
+<select id="sport">
+<option value="soccer">soccer</option>
+<option value="basketball">basketball</option>
+<option value="esports">esports</option>
+<option value="synthetic">synthetic</option>
+</select>
+<label for="question">Question</label>
+<textarea id="question" name="question" rows="3" maxlength="2000" required placeholder="Which team won each EPL game on 2023-08-12 and what was the score?"></textarea>
+<div class="row">
+<label for="max_rows">Max rows</label>
+<input id="max_rows" name="max_rows" type="number" min="1" max="1000" value="50">
+<label for="api_key">API key (optional)</label>
+<input id="api_key" name="api_key" type="password" autocomplete="off" placeholder="only if the gateway has one configured">
+</div>
+<button type="submit" id="ask_button">Ask</button>
+</form>
+<section id="status" hidden></section>
+<section id="result" hidden>
+<div id="meta"></div>
+<div class="tablewrap" id="tablewrap"><table id="table"></table></div>
+<div class="empty" id="empty" hidden>No rows returned.</div>
+<details id="sql_drawer" hidden>
+<summary>SQL used</summary>
+<pre id="sql"></pre>
+</details>
+</section>
+</main>
+<script>
+(function () {
+  const endpoint = '/api/v1/query';
+  const form = document.getElementById('ask');
+  const sportField = document.getElementById('sport');
+  const questionField = document.getElementById('question');
+  const rowsField = document.getElementById('max_rows');
+  const keyField = document.getElementById('api_key');
+  const button = document.getElementById('ask_button');
+  const statusEl = document.getElementById('status');
+  const resultEl = document.getElementById('result');
+  const metaEl = document.getElementById('meta');
+  const tableEl = document.getElementById('table');
+  const tableWrap = document.getElementById('tablewrap');
+  const emptyEl = document.getElementById('empty');
+  const drawerEl = document.getElementById('sql_drawer');
+  const sqlEl = document.getElementById('sql');
+
+  function clampRows() {
+    const parsed = parseInt(rowsField.value, 10);
+    if (Number.isNaN(parsed)) return 50;
+    return Math.min(1000, Math.max(1, parsed));
+  }
+
+  function setStatus(message, kind) {
+    statusEl.textContent = message;
+    statusEl.className = kind;
+    statusEl.hidden = message === '';
+  }
+
+  function addBadge(parent, cacheHeader) {
+    if (!cacheHeader) return;
+    const badge = document.createElement('span');
+    badge.className = 'badge ' + cacheHeader.toLowerCase();
+    badge.textContent = 'CACHE ' + cacheHeader.toUpperCase();
+    parent.appendChild(badge);
+  }
+
+  function addChip(parent, text, warn) {
+    const chip = document.createElement('span');
+    chip.className = 'chip' + (warn ? ' warn' : '');
+    chip.textContent = text;
+    parent.appendChild(chip);
+  }
+
+  function headerLabel(name) {
+    return name.split('_').join(' ');
+  }
+
+  function cellText(value) {
+    return value === null || value === undefined ? '' : String(value);
+  }
+
+  function renderTable(columns, rows) {
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    columns.forEach(function (column) {
+      const th = document.createElement('th');
+      th.textContent = headerLabel(String(column));
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    const tbody = document.createElement('tbody');
+    rows.forEach(function (row) {
+      const tr = document.createElement('tr');
+      columns.forEach(function (_, index) {
+        const td = document.createElement('td');
+        td.textContent = cellText(row[index]);
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    tableEl.replaceChildren(thead, tbody);
+  }
+
+  function showResult(payload, cacheHeader, requestId) {
+    resultEl.hidden = false;
+    metaEl.replaceChildren();
+    addBadge(metaEl, cacheHeader);
+    addChip(metaEl, payload.row_count + ' rows', false);
+    addChip(metaEl, payload.elapsed_ms + ' ms', false);
+    if (payload.truncated) {
+      addChip(metaEl, 'truncated — raise max rows', true);
+    }
+    const empty = !payload.rows || payload.rows.length === 0;
+    tableWrap.hidden = empty;
+    emptyEl.hidden = !empty;
+    if (!empty) {
+      renderTable(payload.columns, payload.rows);
+    } else {
+      tableEl.replaceChildren();
+    }
+    sqlEl.textContent = payload.query || '';
+    drawerEl.hidden = payload.query ? false : true;
+    if (requestId) {
+      const rid = document.createElement('span');
+      rid.className = 'rid';
+      rid.textContent = 'request ' + requestId;
+      metaEl.appendChild(rid);
+    }
+  }
+
+  async function readPayload(response) {
+    const text = await response.text();
+    try {
+      return JSON.parse(text);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  form.addEventListener('submit', async function (event) {
+    event.preventDefault();
+    const question = questionField.value.trim();
+    if (!question) {
+      setStatus('Type a question first.', 'err');
+      return;
+    }
+    const headers = { 'Content-Type': 'application/json' };
+    const apiKey = keyField.value.trim();
+    if (apiKey) headers['X-API-Key'] = apiKey;
+    button.disabled = true;
+    button.textContent = 'Asking…';
+    setStatus('Asking the orchestrator…', 'ok');
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({
+          sport: sportField.value,
+          question: question,
+          max_rows: clampRows()
+        })
+      });
+      const requestId = response.headers.get('X-Request-Id') || '';
+      const payload = await readPayload(response);
+      if (!response.ok) {
+        const code = payload && payload.error ? payload.error.code : 'http_' + response.status;
+        const message = payload && payload.error ? payload.error.message : 'unexpected gateway response';
+        setStatus(code + ': ' + message, 'err');
+        return;
+      }
+      if (!payload || !Array.isArray(payload.columns)) {
+        setStatus('bad_response: gateway returned an unexpected payload', 'err');
+        return;
+      }
+      setStatus('', '');
+      showResult(payload, response.headers.get('X-Cache'), requestId);
+    } catch (err) {
+      setStatus('network_error: gateway unreachable (' + err.message + ')', 'err');
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Ask';
+    }
+  });
+})();
+</script>
+</body>
+</html>

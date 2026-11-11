@@ -1,0 +1,4 @@
+sources:
+  - id: synthetic
+    type: synthetic
+    streams: [snapshot]

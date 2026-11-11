@@ -1,0 +1,39 @@
+name: sports-analytics-test
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: sports
+      MIGRATOR_DB_PASSWORD: dev_migrator
+      INGESTOR_DB_PASSWORD: dev_ingestor
+      ORCHESTRATOR_DB_PASSWORD: dev_orchestrator
+    volumes:
+      - test_pgdata:/var/lib/postgresql/data
+      - ./data/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 5s
+
+  migrator:
+    image: postgres:17-alpine
+    entrypoint: ["/bin/bash", "/migrator/migrate.sh"]
+    environment:
+      DATABASE_URL: postgres://migrator:dev_migrator@postgres:5432/sports
+    volumes:
+      - ./data/migrator/migrate.sh:/migrator/migrate.sh:ro
+      - ./data/migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  test_pgdata:

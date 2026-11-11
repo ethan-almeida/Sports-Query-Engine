@@ -1,0 +1,347 @@
+openapi: 3.1.0
+info:
+  title: sports-analytics orchestration API
+  version: 0.3.0
+  description: |
+    Single source of truth for the Go<->Python API surface.
+
+    Two surfaces share this file:
+
+    - POST /api/v1/query  — public endpoint served by the Go gateway.
+      Auth, rate limiting, and the cache-first flow live here.
+    - /v1/orchestrate     — internal endpoint exposed by the Python orchestrator
+      and consumed by the gateway over the trusted network. The gateway is the
+      only intended client.
+
+    Written by hand against `orchestrator/app/api/v1/schemas.py`; changes to the
+    Python models or the Go DTOs must land together with this file.
+
+servers:
+  - url: http://{gateway_host}:{gateway_port}
+    description: Go gateway (public edge)
+    variables:
+      gateway_host:
+        default: localhost
+      gateway_port:
+        default: '8080'
+  - url: http://{orchestrator_host}:{orchestrator_port}
+    description: Python orchestrator (internal)
+    variables:
+      orchestrator_host:
+        default: localhost
+      orchestrator_port:
+        default: '8000'
+
+tags:
+  - name: gateway
+    description: Public query surface with cache-first flow
+  - name: orchestrator
+    description: Internal orchestration surface consumed by the gateway
+
+paths:
+  /api/v1/query:
+    post:
+      tags: [gateway]
+      operationId: postQuery
+      summary: Answer a sports question
+      description: |
+        Cache-first flow: the gateway keys the request as
+        sha256(sport || "\x1f" || question || "\x1f" || max_rows) and looks it up
+        in Redis. On hit the stored orchestrator response is returned verbatim
+        with `X-Cache: HIT` and the orchestrator is never called. On miss the
+        gateway forwards the question to the orchestrator — which stores the
+        response under the same key with a TTL — and returns the fresh response
+        with `X-Cache: MISS`.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+            examples:
+              basic:
+                value:
+                  sport: nba
+                  question: Which team scored the most points last season?
+      responses:
+        '200':
+          description: Query answered (fresh or cached)
+          headers:
+            X-Cache:
+              description: HIT when answered from the cache, MISS otherwise
+              schema: { type: string, enum: [HIT, MISS] }
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: |
+            Orchestrator found no safe query for the question (proxied verbatim
+            from the orchestrator error envelope).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          description: Orchestrator query or internal failure (proxied verbatim)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '504':
+          description: Orchestrator did not answer within the gateway hard timeout
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /healthz:
+    get:
+      tags: [gateway, orchestrator]
+      operationId: getHealthz
+      summary: Liveness probe
+      description: Both services serve an identical 200 with no dependency checks.
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+
+  /readyz:
+    get:
+      tags: [gateway, orchestrator]
+      operationId: getReadyz
+      summary: Readiness probe
+      description: |
+        Gateway checks its Redis dependency (503 when Redis is unreachable).
+        Orchestrator checks its database connection.
+      responses:
+        '200':
+          description: Dependencies are reachable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ready] }
+        '503':
+          description: A required dependency is unreachable
+
+  /:
+    get:
+      tags: [gateway]
+      operationId: getRootUI
+      summary: Embedded single-page query UI
+      description: |
+        Static browser page served by the gateway. It posts the same
+        `/api/v1/query` envelope documented above, so identical typed
+        questions reuse the cache. Presentation surface only; no data
+        contract. Follows the health-route pattern (no authn, no rate limit);
+        non-GET methods are rejected by the router.
+      responses:
+        '200':
+          description: Self-contained HTML page
+          content:
+            text/html:
+              schema: { type: string }
+        '405':
+          description: Method not allowed (only GET is served)
+
+  /v1/orchestrate:
+    post:
+      tags: [orchestrator]
+      operationId: postOrchestrate
+      summary: Generate SQL, run it read-only, return rows
+      description: |
+        Called only by the gateway. When `cache_key` is present the orchestrator
+        stores the full response JSON under that exact Redis key with
+        `ORC_CACHE_TTL_SECONDS` TTL before responding.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrchestrateRequest'
+      responses:
+        '200':
+          description: Rows fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+        '400':
+          description: Body failed orchestrator-side validation (contract drift)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: No safe query could be produced for the question
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Query execution or internal failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: LLM provider unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        Static key set via `GATEWAY_API_KEY`. When the variable is unset the
+        gateway runs with authentication disabled (dev only).
+
+  headers:
+    XRequestId:
+      description: Correlation id; echoed from the request or generated
+      schema: { type: string, maxLength: 64 }
+
+  responses:
+    BadRequest:
+      description: Request body missing required fields or violating bounds
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            missing:
+              value:
+                error:
+                  code: bad_request
+                  message: request body is invalid
+    Unauthorized:
+      description: X-API-Key missing or wrong (only when authn is enabled)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RateLimited:
+      description: Per-identity fixed-window rate limit exhausted
+      headers:
+        Retry-After:
+          description: Seconds until the window resets
+          schema: { type: integer }
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    BadGateway:
+      description: Orchestrator unreachable or returned a non-JSON body
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    QueryRequest:
+      type: object
+      required: [sport, question]
+      properties:
+        sport:
+          type: string
+          minLength: 1
+          maxLength: 32
+          description: Sport identifier, lowercase (e.g. nba, nfl)
+        question:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Natural language question
+        max_rows:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 50
+          description: Hard cap on returned rows
+
+    OrchestrateRequest:
+      type: object
+      required: [sport, question]
+      properties:
+        sport:
+          type: string
+          minLength: 1
+          maxLength: 32
+        question:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        max_rows:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 50
+        cache_key:
+          type: string
+          maxLength: 128
+          description: Gateway-generated sha256 hex digest the response is cached under
+
+    QueryResponse:
+      type: object
+      required: [query, columns, rows, row_count, truncated, elapsed_ms]
+      properties:
+        query:
+          type: string
+          description: Canonical, safety-gated SQL that was executed
+        columns:
+          type: array
+          items: { type: string }
+        rows:
+          type: array
+          description: Row values; JSON types mirror the Postgres column types
+          items:
+            type: array
+            items: {}
+        row_count:
+          type: integer
+          description: Number of rows returned; equals rows.length
+        truncated:
+          type: boolean
+          description: True when more rows existed than max_rows allowed
+        elapsed_ms:
+          type: integer
+          description: Orchestrator-side wall time in milliseconds
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Machine-readable code (bad_request, safety_violation, llm_unavailable, query_failed, ...)
+            message:
+              type: string
+              description: Generic user-facing message; specifics stay in logs
