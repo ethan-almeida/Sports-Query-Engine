@@ -8,33 +8,33 @@ import (
 )
 
 type Settings struct {
-	ListenAddr      string
-	LogLevel        string
-	LLMBaseURL      string
-	LLMAPIKey       string
-	LLMModelSQL     string
-	LLMModelAnswer  string
-	DatabaseURLRO   string
-	DatabaseURLRW   string
-	RedisURL        string
-	ESPNBaseURL     string
-	ESPNCoreBaseURL string
+	ListenAddr     string
+	LogLevel       string
+	LLMBaseURL     string
+	LLMAPIKey      string
+	LLMModelSQL    string
+	LLMModelAnswer string
+	DatabaseURLRO  string
+	DatabaseURLRW  string
+	RedisURL       string
+	ESPNBaseURL    string
+	ESPNWebBaseURL string
 }
 
 func Load() *Settings {
 	file := parseEnvFile(findEnvFile())
 	return &Settings{
-		ListenAddr:      lookup("LISTEN_ADDR", ":8080", file),
-		LogLevel:        lookup("LOG_LEVEL", "INFO", file),
-		LLMBaseURL:      lookup("LLM_BASE_URL", "", file),
-		LLMAPIKey:       lookup("LLM_API_KEY", "", file),
-		LLMModelSQL:     lookup("LLM_MODEL_SQL", "", file),
-		LLMModelAnswer:  lookup("LLM_MODEL_ANSWER", "", file),
-		DatabaseURLRO:   lookup("DATABASE_URL_RO", "", file),
-		DatabaseURLRW:   lookup("DATABASE_URL_RW", "", file),
-		RedisURL:        lookup("REDIS_URL", "", file),
-		ESPNBaseURL:     lookup("ESPN_BASE_URL", "https://site.api.espn.com", file),
-		ESPNCoreBaseURL: lookup("ESPN_CORE_BASE_URL", "https://sports.core.api.espn.com", file),
+		ListenAddr:     lookup("LISTEN_ADDR", ":8080", file),
+		LogLevel:       lookup("LOG_LEVEL", "INFO", file),
+		LLMBaseURL:     lookup("LLM_BASE_URL", "", file),
+		LLMAPIKey:      lookup("LLM_API_KEY", "", file),
+		LLMModelSQL:    lookup("LLM_MODEL_SQL", "", file),
+		LLMModelAnswer: lookup("LLM_MODEL_ANSWER", "", file),
+		DatabaseURLRO:  lookup("DATABASE_URL_RO", "", file),
+		DatabaseURLRW:  lookup("DATABASE_URL_RW", "", file),
+		RedisURL:       lookup("REDIS_URL", "", file),
+		ESPNBaseURL:    lookup("ESPN_BASE_URL", "https://site.api.espn.com", file),
+		ESPNWebBaseURL: lookup("ESPN_WEB_BASE_URL", "https://www.espn.com", file),
 	}
 }
 
