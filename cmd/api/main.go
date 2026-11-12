@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"sportsql/cmd/api/ui"
+	"sportsql/internal/cache"
 	"sportsql/internal/config"
 	"sportsql/internal/llm"
 	"sportsql/internal/store"
@@ -24,6 +25,13 @@ func main() {
 		slog.Error("config", "error", err.Error())
 		os.Exit(1)
 	}
+
+	cacheStore, err := cache.New(settings.RedisURL)
+	if err != nil {
+		slog.Error("redis connection failed", "error", err.Error())
+		os.Exit(1)
+	}
+	defer cacheStore.Close()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: parseLevel(settings.LogLevel),
@@ -45,6 +53,7 @@ func main() {
 		llm:         llm.New(settings.LLMBaseURL, settings.LLMAPIKey),
 		sqlModel:    settings.LLMModelSQL,
 		answerModel: settings.LLMModelAnswer,
+		cache:       cacheStore,
 	}
 
 	mux := http.NewServeMux()

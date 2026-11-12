@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"sportsql/internal/cache"
 	"sportsql/internal/llm"
 	"sportsql/internal/prompt"
 	"sportsql/internal/sqlguard"
@@ -20,6 +21,7 @@ import (
 type askDeps struct {
 	exec                  *store.Executor
 	llm                   *llm.Client
+	cache                 *cache.Store
 	sqlModel, answerModel string
 }
 
@@ -58,6 +60,21 @@ func askHandler(deps *askDeps) http.HandlerFunc {
 		ctx.Season, _ = deps.exec.CurrentSeason(r.Context())
 		ctx.DataAsOf, _ = deps.exec.DataAsOf(r.Context())
 
+		if cached, ok, err := deps.cache.Get(r.Context(), question, ctx.Today); err != nil {
+			slog.Warn("cache get failed", "question", question, "error", err.Error())
+		} else if ok {
+			slog.Info("cache hit", "question", question, "elapsed_ms", elapsed(start))
+			writeJSON(w, http.StatusOK, askResponse{
+				Answer:   cached.Answer,
+				SQL:      cached.SQL,
+				Rows:     cached.Rows,
+				Columns:  cached.Columns,
+				Cached:   true,
+				DataAsOf: cached.DataAsOf,
+			})
+			return
+		}
+
 		sqlText, result, err := generateSQL(r.Context(), deps, ctx, question)
 		if err != nil {
 			slog.Error("sql generation failed", "question", question, "error", err.Error(), "elapsed_ms", elapsed(start))
@@ -66,13 +83,15 @@ func askHandler(deps *askDeps) http.HandlerFunc {
 		}
 		slog.Info("query executed", "question", question, "rows", len(result.Rows), "elapsed_ms", elapsed(start))
 		if len(result.Rows) == 0 {
-			writeJSON(w, http.StatusOK, askResponse{
+			res := askResponse{
 				Answer:   "I couldn't find any data for that question.",
 				SQL:      sqlText,
 				Columns:  result.Columns,
 				Cached:   false,
 				DataAsOf: ctx.DataAsOf,
-			})
+			}
+			writeJSON(w, http.StatusOK, res)
+			setCache(r.Context(), deps, question, ctx.Today, res)
 			return
 		}
 
@@ -92,14 +111,29 @@ func askHandler(deps *askDeps) http.HandlerFunc {
 			return
 		}
 		slog.Info("ask complete", "question", question, "elapsed_ms", elapsed(start))
-		writeJSON(w, http.StatusOK, askResponse{
+		res := askResponse{
 			Answer:   strings.TrimSpace(answer),
 			SQL:      sqlText,
 			Rows:     result.Rows,
 			Columns:  result.Columns,
 			Cached:   false,
 			DataAsOf: ctx.DataAsOf,
-		})
+		}
+		writeJSON(w, http.StatusOK, res)
+		setCache(r.Context(), deps, question, ctx.Today, res)
+	}
+}
+
+// setCache stores a finished result so a repeat question is served from Redis.
+func setCache(ctx context.Context, deps *askDeps, question, date string, res askResponse) {
+	if err := deps.cache.Set(ctx, question, date, cache.Result{
+		Answer:   res.Answer,
+		SQL:      res.SQL,
+		Rows:     res.Rows,
+		Columns:  res.Columns,
+		DataAsOf: res.DataAsOf,
+	}); err != nil {
+		slog.Warn("cache set failed", "question", question, "error", err.Error())
 	}
 }
 
