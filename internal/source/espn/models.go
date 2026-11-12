@@ -51,43 +51,37 @@ type scoreboardPayload struct {
 	Events []apiEvent `json:"events"`
 }
 
-// ESPN box-score HTML page. There is no JSON box-score endpoint anymore; the
-// data is server-rendered into the page as window['__espnfitt__'] and we pull
-// the bxscr array out of it.
+// ESPN game summary JSON payload (site.api.espn.com/.../summary?event={id}).
+// The box score lives under boxscore.players[]: one entry per team, each with
+// a statistics group whose keys[] line up with every athlete's stats[].
 
-type fittPage struct {
-	Page struct {
-		Content struct {
-			GamePackage struct {
-				Bxscr []bxscrTeamBox `json:"bxscr"`
-			} `json:"gamepackage"`
-		} `json:"content"`
-	} `json:"page"`
+type summaryPayload struct {
+	Boxscore struct {
+		Players []summaryPlayerBox `json:"players"`
+	} `json:"boxscore"`
 }
 
-type bxscrTeamBox struct {
-	Tm    bxscrTeam    `json:"tm"`
-	Stats []bxscrGroup `json:"stats"`
+type summaryPlayerBox struct {
+	Team       summaryTeam        `json:"team"`
+	Statistics []summaryStatGroup `json:"statistics"`
 }
 
-type bxscrTeam struct {
-	Abbrev string `json:"abbrev"`
-	Name   string `json:"nm"`
-	Home   bool   `json:"hm"`
-	ID     string `json:"id"`
+type summaryTeam struct {
+	Abbreviation string `json:"abbreviation"`
 }
 
-type bxscrGroup struct {
-	Type   string         `json:"type"`
-	Keys   []string       `json:"keys"`
-	Athlts []bxscrAthlete `json:"athlts"`
+type summaryStatGroup struct {
+	Keys     []string         `json:"keys"`
+	Athletes []summaryAthlete `json:"athletes"`
 }
 
-type bxscrAthlete struct {
-	Stats []string `json:"stats"`
-	Athlt struct {
-		ID   string `json:"id"`
-		Name string `json:"dspNm"`
-		Pos  string `json:"pos"`
-	} `json:"athlt"`
+type summaryAthlete struct {
+	DidNotPlay bool     `json:"didNotPlay"`
+	Stats      []string `json:"stats"`
+	Athlete    struct {
+		DisplayName string `json:"displayName"`
+		Position    struct {
+			Abbreviation string `json:"abbreviation"`
+		} `json:"position"`
+	} `json:"athlete"`
 }

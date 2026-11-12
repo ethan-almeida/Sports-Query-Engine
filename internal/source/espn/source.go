@@ -14,14 +14,13 @@ import (
 
 const (
 	scoreboardPath = "/apis/site/v2/sports/basketball/nba/scoreboard"
-	boxscorePath   = "/nba/boxscore/_/gameId/%s"
+	summaryPath    = "/apis/site/v2/sports/basketball/nba/summary"
 )
 
-// Source implements source.Source against the public ESPN endpoints:
+// Source implements source.Source against the public ESPN JSON APIs:
 //
-//   - GamesOn: JSON scoreboard API (site.api.espn.com)
-//   - BoxScore: SSR page parse (www.espn.com/nba/boxscore/_/gameId/{id}),
-//     because ESPN retired the JSON box-score endpoints.
+//   - GamesOn:  scoreboard endpoint
+//   - BoxScore: game summary endpoint (boxscore.players[])
 type Source struct {
 	client *client
 }
@@ -57,16 +56,16 @@ func (s *Source) BoxScore(ctx context.Context, gameID string) ([]source.PlayerLi
 	if gameID == "" {
 		return nil, fmt.Errorf("espn boxscore: empty game id")
 	}
-	path := s.client.webBase + fmt.Sprintf(boxscorePath, url.PathEscape(gameID))
-	body, err := s.client.get(ctx, path)
+	queries := url.Values{"event": []string{gameID}}
+	body, err := s.client.get(ctx, s.client.siteBase+summaryPath+"?"+queries.Encode())
 	if err != nil {
 		return nil, fmt.Errorf("espn boxscore %s: %w", gameID, err)
 	}
-	bx, err := extractBxscr(string(body))
-	if err != nil {
-		return nil, fmt.Errorf("espn boxscore %s: %w", gameID, err)
+	var payload summaryPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("espn boxscore %s: decode: %w", gameID, err)
 	}
-	lines, err := parseBxscr(gameID, bx)
+	lines, err := parseSummaryBoxscore(gameID, payload)
 	if err != nil {
 		return nil, fmt.Errorf("espn boxscore %s: %w", gameID, err)
 	}

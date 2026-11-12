@@ -18,7 +18,6 @@ type Settings struct {
 	DatabaseURLRW  string
 	RedisURL       string
 	ESPNBaseURL    string
-	ESPNWebBaseURL string
 }
 
 func Load() *Settings {
@@ -34,7 +33,6 @@ func Load() *Settings {
 		DatabaseURLRW:  lookup("DATABASE_URL_RW", "", file),
 		RedisURL:       lookup("REDIS_URL", "", file),
 		ESPNBaseURL:    lookup("ESPN_BASE_URL", "https://site.api.espn.com", file),
-		ESPNWebBaseURL: lookup("ESPN_WEB_BASE_URL", "https://www.espn.com", file),
 	}
 }
 

@@ -1,9 +1,7 @@
 package espn
 
 import (
-	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"sportsql/internal/source"
@@ -116,108 +114,44 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// ---- box score (SSR page) ------------------------------------------------
+// ---- box score (summary API) ---------------------------------------------
 
-// bxscrMarkerRe matches the prefix of the server-rendered blob that holds the
-// box score. The page assigns it to window['__espnfitt__']. We brace-match the
-// outer object from there and decode just the path we need, so the (large) rest
-// of the page is never fully parsed.
-var bxscrMarkerRe = regexp.MustCompile(`window\['__espnfitt__'\]\s*=\s*\{`)
-
-// extractBxscr pulls the bxscr array out of an ESPN box-score page. The box
-// score is server-rendered into the page as
-//
-//	window['__espnfitt__'] = { "page": { "content": { "gamepackage": { "bxscr": [...] } } } }
-//
-// We brace-match the outer object and decode just the path we need, so the
-// (large) rest of the page is never fully parsed.
-func extractBxscr(page string) ([]bxscrTeamBox, error) {
-	loc := bxscrMarkerRe.FindStringIndex(page)
-	if loc == nil {
-		return nil, fmt.Errorf("no __espnfitt__ blob found (page layout changed or bot-challenge page served)")
-	}
-	// The match ends with the opening brace of the blob object.
-	object := extractJSONObject(page[loc[1]-1:])
-	if object == "" {
-		return nil, fmt.Errorf("could not brace-match the __espnfitt__ object")
-	}
-	var payload fittPage
-	if err := json.Unmarshal([]byte(object), &payload); err != nil {
-		return nil, fmt.Errorf("decode __espnfitt__: %w", err)
-	}
-	if len(payload.Page.Content.GamePackage.Bxscr) == 0 {
-		return nil, fmt.Errorf("bxscr array missing or empty")
-	}
-	return payload.Page.Content.GamePackage.Bxscr, nil
-}
-
-// extractJSONObject returns the balanced top-level JSON object starting at the
-// beginning of s (s must begin with '{').
-func extractJSONObject(s string) string {
-	if len(s) == 0 || s[0] != '{' {
-		return ""
-	}
-	depth := 0
-	inString := false
-	escaped := false
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		switch {
-		case inString:
-			switch {
-			case escaped:
-				escaped = false
-			case ch == '\\':
-				escaped = true
-			case ch == '"':
-				inString = false
-			}
-		case ch == '"':
-			inString = true
-		case ch == '{':
-			depth++
-		case ch == '}':
-			depth--
-			if depth == 0 {
-				return s[:i+1]
-			}
-		}
-	}
-	return ""
-}
-
-// parseBxscr converts the two bxscr team boxes into player lines. DNP players
-// (empty stats array or zero minutes) keep a row with minutes nil.
-func parseBxscr(gameID string, bx []bxscrTeamBox) ([]source.PlayerLine, error) {
-	if len(bx) != 2 {
-		return nil, fmt.Errorf("expected 2 team boxes, got %d", len(bx))
+// parseSummaryBoxscore converts a game summary into player lines. It reuses the
+// scoreboard's positional stat keys, so a group whose keys[] are unreadable is
+// treated as a totals/summary group and skipped. Did-not-play athletes keep a
+// row with minutes nil so averages are safe.
+func parseSummaryBoxscore(gameID string, payload summaryPayload) ([]source.PlayerLine, error) {
+	boxes := payload.Boxscore.Players
+	if len(boxes) == 0 {
+		return nil, fmt.Errorf("summary has no boxscore players")
 	}
 	var lines []source.PlayerLine
 	seenPlayers := map[string]bool{}
-	for _, box := range bx {
-		teamCode := strings.TrimSpace(box.Tm.Abbrev)
-		if teamCode == "" {
-			teamCode = slug(box.Tm.Name)
-		}
+	for _, box := range boxes {
+		teamCode := strings.TrimSpace(box.Team.Abbreviation)
 		if teamCode == "" {
 			return nil, fmt.Errorf("box for team without an abbreviation")
 		}
-		for _, group := range box.Stats {
+		for _, group := range box.Statistics {
 			idx := buildStatIndex(group.Keys)
 			if !idx.ok {
-				// The totals group has no keys; other groups must be parseable.
-				if len(group.Athlts) == 0 {
+				// A group without recognized keys (e.g. team totals) is skipped.
+				if len(group.Athletes) == 0 {
 					continue
 				}
-				return nil, fmt.Errorf("box group %q lacks the expected stat keys", group.Type)
+				return nil, fmt.Errorf("summary group lacks the expected stat keys")
 			}
-			for _, athlete := range group.Athlts {
-				line := mapPlayerLine(gameID, teamCode, athlete.Athlt.Name, athlete.Athlt.Pos, idx, athlete.Stats)
-				if line.Player.Code == "" || line.Player.FullName == "" {
+			for _, athlete := range group.Athletes {
+				name := strings.TrimSpace(athlete.Athlete.DisplayName)
+				if name == "" {
 					continue
 				}
-				// ESPN box scores do not repeat a player; guard anyway.
-				if seenPlayers[line.Player.Code] {
+				values := athlete.Stats
+				if athlete.DidNotPlay {
+					values = nil
+				}
+				line := mapPlayerLine(gameID, teamCode, name, athlete.Athlete.Position.Abbreviation, idx, values)
+				if line.Player.Code == "" || seenPlayers[line.Player.Code] {
 					continue
 				}
 				seenPlayers[line.Player.Code] = true

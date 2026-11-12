@@ -75,7 +75,6 @@ func run(args []string) int {
 	persistence := store.New(pool)
 	src := espn.NewSource(espn.Options{
 		SiteBaseURL: settings.ESPNBaseURL,
-		WebBaseURL:  settings.ESPNWebBaseURL,
 	})
 
 	from, to, err := resolveRange(ctx, persistence, *fromFlag, *toFlag)

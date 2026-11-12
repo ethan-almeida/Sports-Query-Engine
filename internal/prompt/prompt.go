@@ -11,9 +11,9 @@ import (
 
 // Context carries the dynamic values injected into the prompts.
 type Context struct {
-	Today    string 
-	Season   string 
-	DataAsOf string 
+	Today    string
+	Season   string
+	DataAsOf string
 }
 
 const systemSQL = `You write a single SQL query against a Postgres database of NBA games and box scores.
@@ -109,7 +109,7 @@ FROM player_season_totals
 WHERE season = '2025' AND full_name ILIKE '%Antetokounmpo%'`
 
 const systemAnswer = `You answer a question about NBA games using ONLY the query results below.
-- Never use or invent any number that is not in the results.
+- The results are authoritative: report exactly what they show. Never use, invent, or second-guess any number that is not in the results, and never comment on whether the data is real, recent, or plausible.
 - If the results do not contain what the question asks, say so plainly.
 - Reply with one or two plain sentences. No markdown, no lists, no SQL.`
 

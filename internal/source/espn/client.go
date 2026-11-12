@@ -12,28 +12,25 @@ import (
 	"time"
 )
 
-// Options configures the ESPN endpoints. Empty values fall back to the public
+// Options configures the ESPN API. Empty values fall back to the public
 // defaults.
 type Options struct {
-	// SiteBaseURL hosts the JSON scoreboard API.
+	// SiteBaseURL hosts the JSON scoreboard and summary APIs.
 	SiteBaseURL string
-	// WebBaseURL hosts the SSR box-score pages.
-	WebBaseURL string
 	// HTTPClient may be injected for tests.
 	HTTPClient *http.Client
 }
 
 const (
 	defaultSiteBase = "https://site.api.espn.com"
-	defaultWebBase  = "https://www.espn.com"
 
 	defaultPaceInterval = 350 * time.Millisecond
 	// retryPenalty is the backoff after a 429 or a WAF (202) challenge.
 	retryPenalty     = 2 * time.Minute
 	maxAttempts      = 3
 	maxResponseBytes = 8 << 20
-	// userAgent identifies the fetcher. ESPN's front serves SSR pages to
-	// browser-like clients and challenges bare clients with a JS wall.
+	// userAgent identifies the fetcher. ESPN rate-limits and challenges bare
+	// clients, so we present a browser-like agent.
 	userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 )
 
@@ -54,7 +51,6 @@ func realSleep(ctx context.Context, d time.Duration) error {
 type client struct {
 	http     *http.Client
 	siteBase string
-	webBase  string
 	interval time.Duration
 	penalty  time.Duration
 	wait     sleeper
@@ -69,10 +65,6 @@ func newClient(options Options) *client {
 	if siteBase == "" {
 		siteBase = defaultSiteBase
 	}
-	webBase := strings.TrimRight(options.WebBaseURL, "/")
-	if webBase == "" {
-		webBase = defaultWebBase
-	}
 	httpClient := options.HTTPClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 60 * time.Second}
@@ -80,7 +72,6 @@ func newClient(options Options) *client {
 	return &client{
 		http:     httpClient,
 		siteBase: siteBase,
-		webBase:  webBase,
 		interval: defaultPaceInterval,
 		penalty:  retryPenalty,
 		wait:     realSleep,

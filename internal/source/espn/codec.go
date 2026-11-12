@@ -149,7 +149,7 @@ func slug(raw string) string {
 
 // ---- box-score stat mapping ---------------------------------------------
 //
-// A bxscr group carries a keys[] array parallel to each athlete's stats[]
+// A box-score group carries a keys[] array parallel to each athlete's stats[]
 // array, e.g.
 //   keys:  ["minutes","points","fieldGoalsMade-fieldGoalsAttempted",...]
 //   stats: ["39","32","11-22",...]
@@ -248,7 +248,7 @@ func parseMadeAtt(raw string) (made, att int) {
 	return parseCount(parts[0]), parseCount(parts[1])
 }
 
-// mapPlayerLine converts one bxscr athlete (keys + parallel stats) into a clean
+// mapPlayerLine converts one box-score athlete (keys + parallel stats) into a clean
 // source.PlayerLine for the given team. minutes is nil for DNP.
 func mapPlayerLine(gameID, teamCode, name, position string, idx statIndex, values []string) source.PlayerLine {
 	line := source.PlayerLine{
