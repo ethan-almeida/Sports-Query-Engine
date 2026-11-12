@@ -113,13 +113,21 @@ const systemAnswer = `You answer a question about NBA games using ONLY the query
 - If the results do not contain what the question asks, say so plainly.
 - Reply with one or two plain sentences. No markdown, no lists, no SQL.`
 
-// SQLPrompt builds the messages for the SQL-generation call.
-func SQLPrompt(ctx Context, question string) []llm.Message {
+// SQLPrompt builds the messages for the SQL-generation call. When failedSQL and
+// errMsg are non-empty it appends the earlier failure as a
+// hint to write a corrected query.
+func SQLPrompt(ctx Context, question, failedSQL, errMsg string) []llm.Message {
+	user := fmt.Sprintf(
+		"Today is %s. The current season is %s. Data goes up to %s.\nQuestion: %s",
+		ctx.Today, ctx.Season, ctx.DataAsOf, strings.TrimSpace(question))
+	if failedSQL != "" || errMsg != "" {
+		user += fmt.Sprintf(
+			"\n\nYour previous SQL (%s) was rejected: %s. Return only one corrected SELECT using the same schema; no explanation.",
+			strings.TrimSpace(failedSQL), strings.TrimSpace(errMsg))
+	}
 	messages := []llm.Message{
 		{Role: "system", Content: systemSQL},
-		{Role: "user", Content: fmt.Sprintf(
-			"Today is %s. The current season is %s. Data goes up to %s.\nQuestion: %s",
-			ctx.Today, ctx.Season, ctx.DataAsOf, strings.TrimSpace(question))},
+		{Role: "user", Content: user},
 	}
 	size := 0
 	for _, m := range messages {

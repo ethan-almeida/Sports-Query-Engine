@@ -58,17 +58,10 @@ func askHandler(deps *askDeps) http.HandlerFunc {
 		ctx.Season, _ = deps.exec.CurrentSeason(r.Context())
 		ctx.DataAsOf, _ = deps.exec.DataAsOf(r.Context())
 
-		sqlText, err := generateSQL(r.Context(), deps, ctx, question)
+		sqlText, result, err := generateSQL(r.Context(), deps, ctx, question)
 		if err != nil {
 			slog.Error("sql generation failed", "question", question, "error", err.Error(), "elapsed_ms", elapsed(start))
 			writeAskError(w, http.StatusBadGateway, "could not generate SQL: "+err.Error())
-			return
-		}
-
-		result, err := deps.exec.Query(r.Context(), sqlText)
-		if err != nil {
-			slog.Error("query execution failed", "question", question, "sql", sqlText, "error", err.Error(), "elapsed_ms", elapsed(start))
-			writeAskError(w, http.StatusBadGateway, "query failed: "+err.Error())
 			return
 		}
 		slog.Info("query executed", "question", question, "rows", len(result.Rows), "elapsed_ms", elapsed(start))
@@ -83,7 +76,7 @@ func askHandler(deps *askDeps) http.HandlerFunc {
 			return
 		}
 
-		rendered := renderRows(result)
+		rendered := renderRows(*result)
 		answer, err := deps.llm.Chat(r.Context(), deps.answerModel, prompt.AnswerPrompt(ctx, question, sqlText, rendered))
 		if err != nil {
 			slog.Error("answer generation failed", "question", question, "error", err.Error(), "elapsed_ms", elapsed(start))
@@ -110,18 +103,38 @@ func askHandler(deps *askDeps) http.HandlerFunc {
 	}
 }
 
-// generateSQL asks the SQL model for a query, guards it, and executes nothing
-// itself. M3 has no repair retry; the guard error surfaces to the caller.
-func generateSQL(ctx context.Context, deps *askDeps, pctx prompt.Context, question string) (string, error) {
-	raw, err := deps.llm.Chat(ctx, deps.sqlModel, prompt.SQLPrompt(pctx, question))
-	if err != nil {
-		return "", err
+// generateSQL runs the whole SQL stage with a single repair retry: attempt
+// (LLM -> guard -> execute); on a guard or DB error the failed SQL and the
+// message are fed back once, and a second attempt is made. It returns the
+// safe SQL and executed result, or the final error.
+func generateSQL(ctx context.Context, deps *askDeps, pctx prompt.Context, question string) (string, *store.QueryResult, error) {
+	var failedSQL, errMsg string
+	for attempt := 1; attempt <= 2; attempt++ {
+		raw, err := deps.llm.Chat(ctx, deps.sqlModel, prompt.SQLPrompt(pctx, question, failedSQL, errMsg))
+		if err != nil {
+			return "", nil, fmt.Errorf("llm sql call: %w", err)
+		}
+		safe, err := sqlguard.Check(raw)
+		if err != nil {
+			failedSQL, errMsg = raw, err.Error()
+			if attempt == 2 {
+				return "", nil, err
+			}
+			slog.Warn("sql retry: guard rejected", "question", question, "error", err.Error())
+			continue
+		}
+		result, err := deps.exec.Query(ctx, safe)
+		if err != nil {
+			failedSQL, errMsg = safe, err.Error()
+			if attempt == 2 {
+				return "", nil, err
+			}
+			slog.Warn("sql retry: query failed", "question", question, "error", err.Error())
+			continue
+		}
+		return safe, &result, nil
 	}
-	safe, err := sqlguard.Check(raw)
-	if err != nil {
-		return "", fmt.Errorf("guard rejected the SQL: %w", err)
-	}
-	return safe, nil
+	return "", nil, nil
 }
 
 // renderRows formats columns and rows as plain text for the answer prompt,

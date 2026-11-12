@@ -13,10 +13,30 @@ import (
 const MaxRows = 200
 
 var (
-	blocklist    = []string{"insert", "update", "delete", "drop", "alter", "truncate", "create", "grant", "revoke", "copy", "vacuum", "select into", "pg_sleep", "pg_read_file", "lo_import", "set"}
+	// blocklist matches whole words. "into" blocks SELECT ... INTO, which never
+	// appears in a read-only query.
+	blocklist = []struct {
+		word string
+		re   *regexp.Regexp
+	}{
+		{word: "insert"}, {word: "update"}, {word: "delete"}, {word: "drop"},
+		{word: "alter"}, {word: "truncate"}, {word: "create"}, {word: "grant"},
+		{word: "revoke"}, {word: "copy"}, {word: "vacuum"}, {word: "pg_sleep"},
+		{word: "pg_read_file"}, {word: "lo_import"}, {word: "set"},
+		{word: "into"},
+	}
 	multiSelect  = regexp.MustCompile(`(?is);\s*\S`)
 	commentStart = regexp.MustCompile(`(?s)/\*|\-\-`)
 )
+
+func init() {
+	// Compile the blocklist regexes up front so Check does not recompile on
+	// every call. "into" blocks SELECT ... INTO (it never appears in a
+	// read-only query), and needs no special phrase handling.
+	for i := range blocklist {
+		blocklist[i].re = regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(blocklist[i].word) + `\b`)
+	}
+}
 
 // Check cleans up the LLM reply, verifies it is one SELECT statement, and
 // returns the query wrapped in an outer LIMIT 200. The returned error is worded
@@ -37,8 +57,8 @@ func Check(raw string) (string, error) {
 		return "", fmt.Errorf("multiple statements are not allowed")
 	}
 	for _, bad := range blocklist {
-		if regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(bad) + `\b`).MatchString(sql) {
-			return "", fmt.Errorf("the keyword or function %q is not allowed", bad)
+		if bad.re.MatchString(sql) {
+			return "", fmt.Errorf("the keyword or function %q is not allowed", bad.word)
 		}
 	}
 	return fmt.Sprintf("SELECT * FROM (%s) AS sportsql_guard LIMIT %d", sql, MaxRows), nil
