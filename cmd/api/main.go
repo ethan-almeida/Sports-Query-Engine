@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -9,8 +10,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"sportsql/cmd/api/ui"
 	"sportsql/internal/config"
+	"sportsql/internal/llm"
+	"sportsql/internal/store"
 )
 
 func main() {
@@ -25,17 +30,30 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	roPool, err := connect(ctx, settings.DatabaseURLRO)
+	if err != nil {
+		logger.Error("database connection failed", "error", err.Error())
+		os.Exit(1)
+	}
+	defer roPool.Close()
+	executor := store.NewExecutor(roPool)
+	deps := &askDeps{
+		exec:        executor,
+		llm:         llm.New(settings.LLMBaseURL, settings.LLMAPIKey),
+		sqlModel:    settings.LLMModelSQL,
+		answerModel: settings.LLMModelAnswer,
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("GET /{$}", ui.Handler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
-	mux.HandleFunc("POST /ask", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotImplemented)
-		_, _ = w.Write([]byte(`{"error":"not implemented yet"}`))
-	})
+	mux.HandleFunc("POST /ask", askHandler(deps))
 
 	srv := &http.Server{
 		Addr:              settings.ListenAddr,
@@ -51,25 +69,37 @@ func main() {
 		}
 	}()
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-
-	var err error
 	select {
-	case err = <-errCh:
+	case err := <-errCh:
 		logger.Error("api failed", "error", err.Error())
 		os.Exit(1)
-	case sig := <-stop:
-		logger.Info("shutdown signal received", "signal", sig.String())
+	case <-ctx.Done():
+		logger.Info("shutdown signal received")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(shutCtx); err != nil {
 		logger.Error("shutdown failed", "error", err.Error())
 		os.Exit(1)
 	}
 	logger.Info("api stopped")
+}
+
+// connect opens a pgx pool and verifies it with a ping.
+func connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	return pool, nil
 }
 
 func parseLevel(level string) slog.Level {

@@ -50,7 +50,7 @@ func (s *Settings) ForAPI() error {
 	check("LLM_MODEL_SQL", s.LLMModelSQL)
 	check("LLM_MODEL_ANSWER", s.LLMModelAnswer)
 	check("DATABASE_URL_RO", s.DatabaseURLRO)
-	check("REDIS_URL", s.RedisURL)
+	// REDIS_URL is optional until the cache lands in M5.
 	if len(missing) > 0 {
 		return fmt.Errorf("config: missing required for api: %s", strings.Join(missing, ", "))
 	}
