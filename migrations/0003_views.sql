@@ -36,5 +36,7 @@ JOIN player_game_stats s ON s.game_code = g.game_code
 JOIN players p ON p.code = s.player_code
 GROUP BY p.code, p.full_name, p.team_code, g.season;
 
+GRANT SELECT ON player_season_totals TO api_ro;
+
 -- +goose Down
 DROP VIEW IF EXISTS player_season_totals;
