@@ -41,6 +41,10 @@ Rules:
   or divide by COUNT(*) FILTER (WHERE minutes IS NOT NULL).
 - Team questions join teams on code; "Celtics" means name ILIKE '%Celtics%'.
 - Keep results small: use ORDER BY and LIMIT where the question implies a ranking.
+- Team record questions aggregate home AND away games into ONE row of wins and losses.
+- "Game on <date>" lookups filter g.game_date = DATE '<date>' (the NBA game date), never starts_at::date.
+- If the question names a team or player that might not exist in the data, guard the
+  aggregate with HAVING COUNT(*) > 0 so a missing entity returns zero rows (not a 0 count).
 
 Examples (question -> SQL):
 
@@ -70,17 +74,14 @@ WHERE p.full_name ILIKE '%Doncic%' AND s.game_code = (
 )
 
 What is the Celtics' record this season?
-SELECT COUNT(*) FILTER (WHERE home_score > away_score) AS wins,
-       COUNT(*) FILTER (WHERE home_score <= away_score) AS losses
-FROM games g
-JOIN teams t ON t.code = g.home_team_code
-WHERE t.name ILIKE '%Celtics%' AND g.season = '2025' AND g.status = 'final'
+SELECT COUNT(*) FILTER (WHERE won) AS wins, COUNT(*) FILTER (WHERE NOT won) AS losses
+FROM (
+  SELECT (home_score > away_score) AS won FROM games g JOIN teams t ON t.code = g.home_team_code
+  WHERE t.name ILIKE '%Celtics%' AND g.season = '2025' AND g.status = 'final'
   UNION ALL
-SELECT COUNT(*) FILTER (WHERE away_score > home_score),
-       COUNT(*) FILTER (WHERE away_score <= home_score)
-FROM games g
-JOIN teams t ON t.code = g.away_team_code
-WHERE t.name ILIKE '%Celtics%' AND g.season = '2025' AND g.status = 'final'
+  SELECT (away_score > home_score) FROM games g JOIN teams t ON t.code = g.away_team_code
+  WHERE t.name ILIKE '%Celtics%' AND g.season = '2025' AND g.status = 'final'
+) AS all_games
 
 Top 5 rebounders this season?
 SELECT full_name, rebounds
@@ -106,7 +107,16 @@ LIMIT 1
 How many games has Giannis Antetokounmpo played this season?
 SELECT games_played
 FROM player_season_totals
-WHERE season = '2025' AND full_name ILIKE '%Antetokounmpo%'`
+WHERE season = '2025' AND full_name ILIKE '%Antetokounmpo%'
+
+How many points did the Grizzlies score this season?
+SELECT SUM(s.points) AS points
+FROM player_game_stats s
+JOIN games g ON g.game_code = s.game_code
+JOIN players p ON p.code = s.player_code
+JOIN teams t ON t.code = p.team_code
+WHERE t.name ILIKE '%Grizzlies%' AND g.season = '2025'
+HAVING COUNT(*) > 0`
 
 const systemAnswer = `You answer a question about NBA games using ONLY the query results below.
 - The results are authoritative: report exactly what they show. Never use, invent, or second-guess any number that is not in the results, and never comment on whether the data is real, recent, or plausible.
