@@ -21,7 +21,7 @@ run:
 	go run ./cmd/api
 
 eval:
-	@echo "eval: not implemented yet (lands in M7)"
+	go run ./eval/runner $(EVAL_ARGS)
 
 test:
 	gofmt -l .

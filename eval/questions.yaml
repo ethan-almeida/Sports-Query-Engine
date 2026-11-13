@@ -1,0 +1,24 @@
+-
+  question: Who attempted the most 3-pointers this season?
+  expected: Luka Doncic
+-
+  question: Who has scored the most points this season?
+  expected: Luka Doncic
+-
+  question: What is the Celtics' record this season?
+  expected: 10-2
+-
+  question: Top 5 rebounders this season?
+  expected: Karl-Anthony Towns
+-
+  question: How many points did LeBron James score in his most recent game?
+  expected: "11"
+-
+  question: Which team did the Warriors play on November 2?
+  expected: suns
+-
+  question: Who leads the league in steals this season?
+  expected: Dyson Daniels
+-
+  question: How many games has Giannis Antetokounmpo played this season?
+  expected: "11"
